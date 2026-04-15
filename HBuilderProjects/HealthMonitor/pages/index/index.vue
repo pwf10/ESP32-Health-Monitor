@@ -206,15 +206,15 @@ export default {
   data() {
     return {
       connectionStatus: 'disconnected',
-      serverAddress: 'ws://10.253.88.78:8080',
-      serverAddressInput: 'ws://10.253.88.78:8080',
+      serverAddress: 'ws://10.14.96.78:8080',
+      serverAddressInput: 'ws://10.14.96.78:8080',
       showServerConfig: false,
       dataCount: 0,
       ws: null,
       reconnectTimer: null,
-      timeoutTimer: null,          // 数据超时定时器
-      heartbeatTimer: null,        // 心跳定时器（新增）
-      lastDataTimestamp: 0,        // 最后一次收到数据的时间戳
+      timeoutTimer: null,
+      heartbeatTimer: null,
+      lastDataTimestamp: 0,
 
       isWorn: false,
       fallDetected: false,
@@ -250,12 +250,16 @@ export default {
       localIp: '未知',
       deviceIp: '',
 
+      // 新增：报警状态记录
+      isAlerting: false,
+      lastAlertLevel: 0,
+
       thresholds: {
         pitch: 15,
         roll: 20,
-        hrMin: 30,
-        hrMax: 200,
-        spo2Min: 70,
+        hrMin: 60,
+        hrMax: 100,
+        spo2Min: 90,
         tempMin: 0,
         tempMax: 50,
         humMin: 20,
@@ -280,7 +284,7 @@ export default {
   onShow() {
     this.loadThresholds()
     this.loadAlertLevels()
-    this.loadServerConfig()  // 每次显示页面都重新加载服务器地址
+    this.loadServerConfig()
     console.log('📂 从本地存储重新加载阈值和级别范围')
   },
 
@@ -288,7 +292,7 @@ export default {
     this.disconnect()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.timeoutTimer) clearInterval(this.timeoutTimer)
-    this.stopHeartbeat() // 确保清除心跳
+    this.stopHeartbeat()
   },
 
   methods: {
@@ -314,7 +318,6 @@ export default {
       try {
         const saved = uni.getStorageSync('server_config')
         if (saved && saved.address) {
-          // 如果地址变化，则更新并重连
           if (this.serverAddress !== saved.address) {
             this.serverAddress = saved.address
             this.serverAddressInput = saved.address
@@ -367,9 +370,7 @@ export default {
         this.ws.onOpen(() => {
           console.log('✅ WebSocket连接已打开')
           this.connectionStatus = 'connected'
-          // 启动数据超时检测
           this.startDataTimeoutCheck()
-          // 启动心跳
           this.startHeartbeat()
           uni.showToast({ title: '连接成功', icon: 'success', duration: 1500 })
           setTimeout(() => this.sendTestCommand(), 500)
@@ -379,14 +380,14 @@ export default {
           console.error('❌ WebSocket连接错误:', error)
           this.isWorn = false
           this.connectionStatus = 'error'
-          this.stopHeartbeat() // 停止心跳
+          this.stopHeartbeat()
           uni.showToast({ title: '连接失败', icon: 'error', duration: 2000 })
           this.scheduleReconnect(5000)
         })
         this.ws.onClose(() => {
           console.log('连接关闭')
           this.isWorn = false
-          this.stopHeartbeat() // 停止心跳
+          this.stopHeartbeat()
           if (this.connectionStatus === 'connected' || this.connectionStatus === 'no_data') {
             this.connectionStatus = 'disconnected'
             this.scheduleReconnect(2000)
@@ -399,22 +400,20 @@ export default {
       }
     },
 
-    // 启动数据超时检测（每秒检查一次，超过5秒无数据则标记为无数据）
     startDataTimeoutCheck() {
       if (this.timeoutTimer) clearInterval(this.timeoutTimer)
       this.lastDataTimestamp = Date.now()
       this.timeoutTimer = setInterval(() => {
         if (this.connectionStatus === 'connected' && Date.now() - this.lastDataTimestamp > 10000) {
-          console.log('⚠️ 超过5秒未收到数据，标记为无数据')
+          console.log('⚠️ 超过10秒未收到数据，标记为无数据')
           this.connectionStatus = 'no_data'
           this.isWorn = false
         }
       }, 1000)
     },
 
-    // ---------- 新增：心跳机制 ----------
     startHeartbeat() {
-      this.stopHeartbeat() // 先清除旧的
+      this.stopHeartbeat()
       this.heartbeatTimer = setInterval(() => {
         if (this.ws && this.connectionStatus === 'connected') {
           this.ws.send({
@@ -423,7 +422,7 @@ export default {
             fail: (err) => console.log('💓 心跳发送失败', err)
           })
         }
-      }, 15000) // 每15秒发送一次
+      }, 15000)
     },
 
     stopHeartbeat() {
@@ -432,13 +431,10 @@ export default {
         this.heartbeatTimer = null
       }
     },
-    // ------------------------------------
 
     handleWebSocketMessage(message) {
       this.dataCount++
-      // 更新最后数据时间戳
       this.lastDataTimestamp = Date.now()
-      // 如果之前是无数据状态，重新标记为已连接
       if (this.connectionStatus === 'no_data') {
         this.connectionStatus = 'connected'
       }
@@ -452,9 +448,7 @@ export default {
             console.log('服务器欢迎:', data.message)
             break
           case 'sensor_data':
-            // 先更新 UI 并添加字段
             this.updateSensorData(data.data)
-            // 再保存到历史（此时 data.data 已包含 posture_is_abnormal 等字段）
             if (realData && realData.websocketManager) {
               realData.websocketManager.addToHistory(data.data)
             }
@@ -463,7 +457,6 @@ export default {
             console.log('收到pong响应')
             break
           default:
-            // 对于其他可能包含传感器数据的消息，直接保存原始数据
             if (realData && realData.websocketManager) {
               if (
                 data.posture_data ||
@@ -551,12 +544,11 @@ export default {
         this.checkPostureWarning()
       }
 
-      // ========== 将计算出的异常状态写回 sensorData，供历史记录使用 ==========
+      // 写回历史数据
       sensorData.posture_is_abnormal = this.isAbnormal
       sensorData.posture_level = this.postureLevel
       sensorData.posture_status = this.postureStatus
       sensorData.posture_detail = this.postureDetail
-      // ====================================================================
 
       if (sensorData.fall_detected !== undefined) {
         this.fallDetected = sensorData.fall_detected
@@ -600,32 +592,71 @@ export default {
         const levels = ['', '轻度', '中度', '重度']
         this.warningMessage = `检测到${levels[this.warningLevel]}体态异常：${this.postureDetail}`
 
-        const durations = [0, 1, 3, 5]
-        console.log('发送体态异常指令，level=', this.postureLevel, 'duration=', durations[this.postureLevel])
-        this.sendAlertCommand(this.postureLevel, durations[this.postureLevel])
-      }
-    },
-
-    checkVitalWarning() {
-      if (this.heartRateValid) {
-        if (this.heartRate < this.thresholds.hrMin) {
-          this.hasWarning = true
-          this.warningLevel = Math.max(this.warningLevel, 2)
-          this.warningMessage = `心率过低：${this.heartRate} BPM`
-        } else if (this.heartRate > this.thresholds.hrMax) {
-          this.hasWarning = true
-          this.warningLevel = Math.max(this.warningLevel, 2)
-          this.warningMessage = `心率过高：${this.heartRate} BPM`
+        // 只有尚未报警或级别变化时才发送指令
+        if (!this.isAlerting || this.lastAlertLevel !== this.postureLevel) {
+          const durations = [0, 1, 3, 5]
+          console.log('发送体态异常指令，level=', this.postureLevel, 'duration=', durations[this.postureLevel])
+          this.sendAlertCommand(this.postureLevel, durations[this.postureLevel])
+          this.isAlerting = true
+          this.lastAlertLevel = this.postureLevel
+        } else {
+          console.log('防抖：忽略重复预警')
+        }
+      } else {
+        // 恢复正常，立即停止声光
+        if (this.isAlerting) {
+          console.log('体态恢复正常，停止声光')
+          this.sendStopAlert()
+          this.isAlerting = false
+          this.lastAlertLevel = 0
+          this.hasWarning = false
+          this.warningMessage = ''
+          this.warningLevel = 0
         }
       }
-      if (this.spo2Valid && this.spo2 < this.thresholds.spo2Min) {
-        this.hasWarning = true
-        this.warningLevel = Math.max(this.warningLevel, 3)
-        this.warningMessage = `血氧过低：${this.spo2}%`
-      }
     },
 
-    // 双通道发送指令
+    
+	checkVitalWarning() {
+	  let shouldSendAlert = false
+	  let alertLevel = 0
+	  let alertDuration = 0
+	
+	  // 心率异常判断（仅当数据有效时）
+	  if (this.heartRateValid) {
+	    if (this.heartRate < this.thresholds.hrMin) {
+	      this.hasWarning = true
+	      this.warningLevel = Math.max(this.warningLevel, 2)
+	      this.warningMessage = `心率过低：${this.heartRate} BPM`
+	      shouldSendAlert = true
+	      alertLevel = 2
+	      alertDuration = 3
+	    } else if (this.heartRate > this.thresholds.hrMax) {
+	      this.hasWarning = true
+	      this.warningLevel = Math.max(this.warningLevel, 2)
+	      this.warningMessage = `心率过高：${this.heartRate} BPM`
+	      shouldSendAlert = true
+	      alertLevel = 2
+	      alertDuration = 3
+	    }
+	  }
+	
+	  // 血氧异常判断（仅当数据有效时）
+	  if (this.spo2Valid && this.spo2 < this.thresholds.spo2Min) {
+	    this.hasWarning = true
+	    this.warningLevel = Math.max(this.warningLevel, 3)
+	    this.warningMessage = `血氧过低：${this.spo2}%`
+	    shouldSendAlert = true
+	    alertLevel = 3
+	    alertDuration = 5
+	  }
+	
+	  if (shouldSendAlert) {
+	    console.log('发送生理参数声光指令，level=', alertLevel, 'duration=', alertDuration)
+	    this.sendAlertCommand(alertLevel, alertDuration)
+	  }
+	},
+
     sendAlertCommand(level, duration = 0) {
       if (this.deviceIp && typeof uni.createUDPSocket === 'function') {
         this.sendAlertViaUDP(level, duration)
@@ -716,7 +747,7 @@ export default {
       }
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
       if (this.timeoutTimer) clearInterval(this.timeoutTimer)
-      this.stopHeartbeat() // 停止心跳
+      this.stopHeartbeat()
     },
 
     scheduleReconnect(delay = 3000) {
@@ -765,12 +796,16 @@ export default {
       this.warningMessage = ''
       this.warningLevel = 0
       this.sendStopAlert()
+      this.isAlerting = false
+      this.lastAlertLevel = 0
     },
 
     acknowledgeFall() {
       this.fallDetected = false
       this.hasWarning = false
       this.sendStopAlert()
+      this.isAlerting = false
+      this.lastAlertLevel = 0
       uni.showToast({ title: '已确认', icon: 'success' })
     },
 
@@ -778,6 +813,8 @@ export default {
       this.fallDetected = false
       this.hasWarning = false
       this.sendStopAlert()
+      this.isAlerting = false
+      this.lastAlertLevel = 0
       uni.showToast({ title: '已忽略', icon: 'none' })
     },
 

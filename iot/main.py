@@ -44,7 +44,7 @@ except Exception as e:
 # ==================== 2. 系统配置 ====================
 WIFI_SSID = "one"
 WIFI_PASSWORD = "2230090245"
-UDP_TARGET_IP = "10.253.88.78"        # 服务器IP（电脑IP）
+UDP_TARGET_IP = "10.14.96.78"        # 服务器IP（电脑IP）
 UDP_TARGET_PORT = 8888                   # 服务器UDP接收端口（数据上报）
 UDP_RECV_PORT = 8889                      # 硬件接收指令的端口（APP指令）
 UDP_BUFFER_SIZE = 1024
@@ -271,6 +271,9 @@ def control_alert(sensors, alert_timer, level, duration):
     :param level: 报警级别（0=关闭，1=轻度，2=中度，3=重度，仅用于显示，实际控制相同）
     :param duration: 持续时间（秒），0表示立即关闭
     """
+    # 先停止当前声光（如果有）
+    stop_alert(sensors, alert_timer)
+    
     if level > 0:
         # 开启声光
         if 'led' in sensors:
@@ -284,9 +287,7 @@ def control_alert(sensors, alert_timer, level, duration):
             alert_timer.init(period=int(duration * 1000),
                              mode=Timer.ONE_SHOT,
                              callback=lambda t: stop_alert(sensors, alert_timer))
-    else:
-        # 关闭声光
-        stop_alert(sensors, alert_timer)
+    # else: level == 0 时已经调用 stop_alert，无需额外处理
 
 def stop_alert(sensors, alert_timer):
     """关闭LED和蜂鸣器"""
@@ -294,7 +295,10 @@ def stop_alert(sensors, alert_timer):
         sensors['led'].value(0)
     if 'buzzer' in sensors:
         sensors['buzzer'].value(1)
-    alert_timer.deinit()
+    try:
+        alert_timer.deinit()
+    except:
+        pass
     print("🔕 声光已关闭")
 
 # ==================== 10. 主程序模块 ====================
@@ -396,7 +400,7 @@ def main():
                 'humidity': 0.0,
                 'temp_valid': False,
                 'hum_valid': False,
-                'local_ip': local_ip,
+                'local_ip': local_ip,           # 已包含硬件IP
                 'data_count': data_count,
                 'abnormal_count': abnormal_count,
                 'fall_detected': False

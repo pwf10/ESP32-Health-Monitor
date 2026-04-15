@@ -45,7 +45,7 @@ if (uni.restoreGlobal) {
       this.reconnectTimer = null;
       this.messageHandlers = /* @__PURE__ */ new Set();
       this.connectionState = "disconnected";
-      this.serverAddress = "ws://10.253.88.78:8080";
+      this.serverAddress = "ws://10.14.96.78:8080";
       this.dataHistory = [];
       this.maxHistory = 100;
       this.reconnectCount = 0;
@@ -906,18 +906,15 @@ if (uni.restoreGlobal) {
     data() {
       return {
         connectionStatus: "disconnected",
-        serverAddress: "ws://10.253.88.78:8080",
-        serverAddressInput: "ws://10.253.88.78:8080",
+        serverAddress: "ws://10.14.96.78:8080",
+        serverAddressInput: "ws://10.14.96.78:8080",
         showServerConfig: false,
         dataCount: 0,
         ws: null,
         reconnectTimer: null,
         timeoutTimer: null,
-        // 数据超时定时器
         heartbeatTimer: null,
-        // 心跳定时器（新增）
         lastDataTimestamp: 0,
-        // 最后一次收到数据的时间戳
         isWorn: false,
         fallDetected: false,
         pitch: 0,
@@ -945,12 +942,15 @@ if (uni.restoreGlobal) {
         deviceId: "未知",
         localIp: "未知",
         deviceIp: "",
+        // 新增：报警状态记录
+        isAlerting: false,
+        lastAlertLevel: 0,
         thresholds: {
           pitch: 15,
           roll: 20,
-          hrMin: 30,
-          hrMax: 200,
-          spo2Min: 70,
+          hrMin: 60,
+          hrMax: 100,
+          spo2Min: 90,
           tempMin: 0,
           tempMax: 50,
           humMin: 20,
@@ -973,7 +973,7 @@ if (uni.restoreGlobal) {
       this.loadThresholds();
       this.loadAlertLevels();
       this.loadServerConfig();
-      formatAppLog("log", "at pages/index/index.vue:284", "📂 从本地存储重新加载阈值和级别范围");
+      formatAppLog("log", "at pages/index/index.vue:288", "📂 从本地存储重新加载阈值和级别范围");
     },
     onUnload() {
       this.disconnect();
@@ -990,7 +990,7 @@ if (uni.restoreGlobal) {
           if (saved)
             this.alertLevels = saved;
         } catch (e) {
-          formatAppLog("log", "at pages/index/index.vue:300", "加载预警级别失败:", e);
+          formatAppLog("log", "at pages/index/index.vue:304", "加载预警级别失败:", e);
         }
       },
       loadThresholds() {
@@ -999,7 +999,7 @@ if (uni.restoreGlobal) {
           if (saved)
             this.thresholds = { ...this.thresholds, ...saved };
         } catch (e) {
-          formatAppLog("log", "at pages/index/index.vue:309", "加载阈值失败:", e);
+          formatAppLog("log", "at pages/index/index.vue:313", "加载阈值失败:", e);
         }
       },
       loadServerConfig() {
@@ -1016,7 +1016,7 @@ if (uni.restoreGlobal) {
             }
           }
         } catch (e) {
-          formatAppLog("log", "at pages/index/index.vue:328", "加载配置失败:", e);
+          formatAppLog("log", "at pages/index/index.vue:331", "加载配置失败:", e);
         }
       },
       saveServerConfig() {
@@ -1034,27 +1034,27 @@ if (uni.restoreGlobal) {
         try {
           uni.setStorageSync("server_config", { address: normalizedAddress });
         } catch (e) {
-          formatAppLog("log", "at pages/index/index.vue:347", "保存配置失败:", e);
+          formatAppLog("log", "at pages/index/index.vue:350", "保存配置失败:", e);
         }
         this.showServerConfig = false;
         this.reconnect();
       },
       connectToServer() {
         this.disconnect();
-        formatAppLog("log", "at pages/index/index.vue:355", "开始连接服务器:", this.serverAddress);
+        formatAppLog("log", "at pages/index/index.vue:358", "开始连接服务器:", this.serverAddress);
         this.connectionStatus = "connecting";
         try {
           this.ws = uni.connectSocket({
             url: this.serverAddress,
-            success: () => formatAppLog("log", "at pages/index/index.vue:360", "✅ connectSocket成功回调"),
+            success: () => formatAppLog("log", "at pages/index/index.vue:363", "✅ connectSocket成功回调"),
             fail: (error) => {
-              formatAppLog("error", "at pages/index/index.vue:362", "❌ connectSocket失败:", error);
+              formatAppLog("error", "at pages/index/index.vue:365", "❌ connectSocket失败:", error);
               this.connectionStatus = "error";
               this.scheduleReconnect(5e3);
             }
           });
           this.ws.onOpen(() => {
-            formatAppLog("log", "at pages/index/index.vue:368", "✅ WebSocket连接已打开");
+            formatAppLog("log", "at pages/index/index.vue:371", "✅ WebSocket连接已打开");
             this.connectionStatus = "connected";
             this.startDataTimeoutCheck();
             this.startHeartbeat();
@@ -1063,7 +1063,7 @@ if (uni.restoreGlobal) {
           });
           this.ws.onMessage((res) => this.handleWebSocketMessage(res.data));
           this.ws.onError((error) => {
-            formatAppLog("error", "at pages/index/index.vue:379", "❌ WebSocket连接错误:", error);
+            formatAppLog("error", "at pages/index/index.vue:380", "❌ WebSocket连接错误:", error);
             this.isWorn = false;
             this.connectionStatus = "error";
             this.stopHeartbeat();
@@ -1071,7 +1071,7 @@ if (uni.restoreGlobal) {
             this.scheduleReconnect(5e3);
           });
           this.ws.onClose(() => {
-            formatAppLog("log", "at pages/index/index.vue:387", "连接关闭");
+            formatAppLog("log", "at pages/index/index.vue:388", "连接关闭");
             this.isWorn = false;
             this.stopHeartbeat();
             if (this.connectionStatus === "connected" || this.connectionStatus === "no_data") {
@@ -1080,33 +1080,31 @@ if (uni.restoreGlobal) {
             }
           });
         } catch (error) {
-          formatAppLog("error", "at pages/index/index.vue:396", "创建WebSocket异常:", error);
+          formatAppLog("error", "at pages/index/index.vue:397", "创建WebSocket异常:", error);
           this.connectionStatus = "error";
           this.scheduleReconnect(3e3);
         }
       },
-      // 启动数据超时检测（每秒检查一次，超过5秒无数据则标记为无数据）
       startDataTimeoutCheck() {
         if (this.timeoutTimer)
           clearInterval(this.timeoutTimer);
         this.lastDataTimestamp = Date.now();
         this.timeoutTimer = setInterval(() => {
           if (this.connectionStatus === "connected" && Date.now() - this.lastDataTimestamp > 1e4) {
-            formatAppLog("log", "at pages/index/index.vue:408", "⚠️ 超过5秒未收到数据，标记为无数据");
+            formatAppLog("log", "at pages/index/index.vue:408", "⚠️ 超过10秒未收到数据，标记为无数据");
             this.connectionStatus = "no_data";
             this.isWorn = false;
           }
         }, 1e3);
       },
-      // ---------- 新增：心跳机制 ----------
       startHeartbeat() {
         this.stopHeartbeat();
         this.heartbeatTimer = setInterval(() => {
           if (this.ws && this.connectionStatus === "connected") {
             this.ws.send({
               data: JSON.stringify({ type: "ping", timestamp: Date.now() }),
-              success: () => formatAppLog("log", "at pages/index/index.vue:422", "💓 心跳发送成功"),
-              fail: (err) => formatAppLog("log", "at pages/index/index.vue:423", "💓 心跳发送失败", err)
+              success: () => formatAppLog("log", "at pages/index/index.vue:421", "💓 心跳发送成功"),
+              fail: (err) => formatAppLog("log", "at pages/index/index.vue:422", "💓 心跳发送失败", err)
             });
           }
         }, 15e3);
@@ -1117,7 +1115,6 @@ if (uni.restoreGlobal) {
           this.heartbeatTimer = null;
         }
       },
-      // ------------------------------------
       handleWebSocketMessage(message) {
         this.dataCount++;
         this.lastDataTimestamp = Date.now();
@@ -1126,10 +1123,10 @@ if (uni.restoreGlobal) {
         }
         try {
           const data = JSON.parse(message);
-          formatAppLog("log", "at pages/index/index.vue:448", "收到消息类型:", data.type);
+          formatAppLog("log", "at pages/index/index.vue:444", "收到消息类型:", data.type);
           switch (data.type) {
             case "welcome":
-              formatAppLog("log", "at pages/index/index.vue:452", "服务器欢迎:", data.message);
+              formatAppLog("log", "at pages/index/index.vue:448", "服务器欢迎:", data.message);
               break;
             case "sensor_data":
               this.updateSensorData(data.data);
@@ -1138,7 +1135,7 @@ if (uni.restoreGlobal) {
               }
               break;
             case "pong":
-              formatAppLog("log", "at pages/index/index.vue:463", "收到pong响应");
+              formatAppLog("log", "at pages/index/index.vue:457", "收到pong响应");
               break;
             default:
               if (realData && realData.websocketManager) {
@@ -1149,16 +1146,16 @@ if (uni.restoreGlobal) {
               break;
           }
         } catch (error) {
-          formatAppLog("log", "at pages/index/index.vue:481", "收到非JSON消息:", message);
+          formatAppLog("log", "at pages/index/index.vue:474", "收到非JSON消息:", message);
         }
       },
       updateSensorData(sensorData) {
-        formatAppLog("log", "at pages/index/index.vue:486", "更新传感器数据:", sensorData);
+        formatAppLog("log", "at pages/index/index.vue:479", "更新传感器数据:", sensorData);
         const now = /* @__PURE__ */ new Date();
         this.lastUpdateTime = now.toLocaleTimeString();
         if (sensorData.network_info && sensorData.network_info.local_ip) {
           this.deviceIp = sensorData.network_info.local_ip;
-          formatAppLog("log", "at pages/index/index.vue:493", "硬件IP:", this.deviceIp);
+          formatAppLog("log", "at pages/index/index.vue:486", "硬件IP:", this.deviceIp);
         }
         if (sensorData.device_id) {
           this.deviceId = sensorData.device_id;
@@ -1171,7 +1168,7 @@ if (uni.restoreGlobal) {
           this.roll = sensorData.posture_data.roll || 0;
           formatAppLog(
             "log",
-            "at pages/index/index.vue:507",
+            "at pages/index/index.vue:500",
             "pitch:",
             this.pitch,
             "roll:",
@@ -1187,7 +1184,7 @@ if (uni.restoreGlobal) {
           const isPitchExceed = pitchAbs > this.thresholds.pitch;
           const isRollExceed = rollAbs > this.thresholds.roll;
           this.isAbnormal = isPitchExceed || isRollExceed;
-          formatAppLog("log", "at pages/index/index.vue:518", "isAbnormal:", this.isAbnormal);
+          formatAppLog("log", "at pages/index/index.vue:511", "isAbnormal:", this.isAbnormal);
           if (this.isAbnormal) {
             let level = 1;
             for (let i = 0; i < this.alertLevels.length; i++) {
@@ -1198,7 +1195,7 @@ if (uni.restoreGlobal) {
               }
             }
             this.postureLevel = level;
-            formatAppLog("log", "at pages/index/index.vue:530", "重新计算等级:", this.postureLevel);
+            formatAppLog("log", "at pages/index/index.vue:523", "重新计算等级:", this.postureLevel);
             if (isPitchExceed && isRollExceed) {
               this.postureStatus = "异常";
               this.postureDetail = "前倾/后仰且侧倾";
@@ -1228,7 +1225,7 @@ if (uni.restoreGlobal) {
             this.hasWarning = true;
             this.warningLevel = 3;
             this.warningMessage = "⚠️ 检测到跌倒！请立即确认用户安全！";
-            formatAppLog("log", "at pages/index/index.vue:567", "跌倒检测触发，发送紧急声光");
+            formatAppLog("log", "at pages/index/index.vue:559", "跌倒检测触发，发送紧急声光");
             this.sendAlertCommand(3, 10);
           }
         }
@@ -1253,36 +1250,67 @@ if (uni.restoreGlobal) {
         }
       },
       checkPostureWarning() {
-        formatAppLog("log", "at pages/index/index.vue:596", "checkPostureWarning 被调用，isAbnormal=", this.isAbnormal, "postureLevel=", this.postureLevel);
+        formatAppLog("log", "at pages/index/index.vue:588", "checkPostureWarning 被调用，isAbnormal=", this.isAbnormal, "postureLevel=", this.postureLevel);
         if (this.isAbnormal) {
           this.hasWarning = true;
           this.warningLevel = this.postureLevel;
           const levels = ["", "轻度", "中度", "重度"];
           this.warningMessage = `检测到${levels[this.warningLevel]}体态异常：${this.postureDetail}`;
-          const durations = [0, 1, 3, 5];
-          formatAppLog("log", "at pages/index/index.vue:604", "发送体态异常指令，level=", this.postureLevel, "duration=", durations[this.postureLevel]);
-          this.sendAlertCommand(this.postureLevel, durations[this.postureLevel]);
+          if (!this.isAlerting || this.lastAlertLevel !== this.postureLevel) {
+            const durations = [0, 1, 3, 5];
+            formatAppLog("log", "at pages/index/index.vue:598", "发送体态异常指令，level=", this.postureLevel, "duration=", durations[this.postureLevel]);
+            this.sendAlertCommand(this.postureLevel, durations[this.postureLevel]);
+            this.isAlerting = true;
+            this.lastAlertLevel = this.postureLevel;
+          } else {
+            formatAppLog("log", "at pages/index/index.vue:603", "防抖：忽略重复预警");
+          }
+        } else {
+          if (this.isAlerting) {
+            formatAppLog("log", "at pages/index/index.vue:608", "体态恢复正常，停止声光");
+            this.sendStopAlert();
+            this.isAlerting = false;
+            this.lastAlertLevel = 0;
+            this.hasWarning = false;
+            this.warningMessage = "";
+            this.warningLevel = 0;
+          }
         }
       },
       checkVitalWarning() {
+        let shouldSendAlert = false;
+        let alertLevel = 0;
+        let alertDuration = 0;
         if (this.heartRateValid) {
           if (this.heartRate < this.thresholds.hrMin) {
             this.hasWarning = true;
             this.warningLevel = Math.max(this.warningLevel, 2);
             this.warningMessage = `心率过低：${this.heartRate} BPM`;
+            shouldSendAlert = true;
+            alertLevel = 2;
+            alertDuration = 3;
           } else if (this.heartRate > this.thresholds.hrMax) {
             this.hasWarning = true;
             this.warningLevel = Math.max(this.warningLevel, 2);
             this.warningMessage = `心率过高：${this.heartRate} BPM`;
+            shouldSendAlert = true;
+            alertLevel = 2;
+            alertDuration = 3;
           }
         }
         if (this.spo2Valid && this.spo2 < this.thresholds.spo2Min) {
           this.hasWarning = true;
           this.warningLevel = Math.max(this.warningLevel, 3);
           this.warningMessage = `血氧过低：${this.spo2}%`;
+          shouldSendAlert = true;
+          alertLevel = 3;
+          alertDuration = 5;
+        }
+        if (shouldSendAlert) {
+          formatAppLog("log", "at pages/index/index.vue:655", "发送生理参数声光指令，level=", alertLevel, "duration=", alertDuration);
+          this.sendAlertCommand(alertLevel, alertDuration);
         }
       },
-      // 双通道发送指令
       sendAlertCommand(level, duration = 0) {
         if (this.deviceIp && typeof uni.createUDPSocket === "function") {
           this.sendAlertViaUDP(level, duration);
@@ -1297,7 +1325,7 @@ if (uni.restoreGlobal) {
           duration,
           timestamp: Date.now()
         });
-        formatAppLog("log", "at pages/index/index.vue:644", "尝试UDP发送到", this.deviceIp, "端口8889，消息:", message);
+        formatAppLog("log", "at pages/index/index.vue:675", "尝试UDP发送到", this.deviceIp, "端口8889，消息:", message);
         try {
           const udp = uni.createUDPSocket();
           udp.bind();
@@ -1306,22 +1334,22 @@ if (uni.restoreGlobal) {
             port: 8889,
             message,
             success: () => {
-              formatAppLog("log", "at pages/index/index.vue:653", "📤 UDP报警指令发送成功，level=" + level + ", duration=" + duration);
+              formatAppLog("log", "at pages/index/index.vue:684", "📤 UDP报警指令发送成功，level=" + level + ", duration=" + duration);
             },
             fail: (err) => {
-              formatAppLog("error", "at pages/index/index.vue:656", "UDP发送失败，尝试WebSocket发送:", err);
+              formatAppLog("error", "at pages/index/index.vue:687", "UDP发送失败，尝试WebSocket发送:", err);
               this.sendAlertViaWebSocket(level, duration);
             },
             complete: () => udp.close()
           });
         } catch (e) {
-          formatAppLog("error", "at pages/index/index.vue:662", "UDP异常，尝试WebSocket发送:", e);
+          formatAppLog("error", "at pages/index/index.vue:693", "UDP异常，尝试WebSocket发送:", e);
           this.sendAlertViaWebSocket(level, duration);
         }
       },
       sendAlertViaWebSocket(level, duration) {
         if (this.connectionStatus !== "connected" || !this.ws) {
-          formatAppLog("warn", "at pages/index/index.vue:669", "WebSocket未连接，无法发送指令");
+          formatAppLog("warn", "at pages/index/index.vue:700", "WebSocket未连接，无法发送指令");
           return;
         }
         const message = JSON.stringify({
@@ -1334,10 +1362,10 @@ if (uni.restoreGlobal) {
         this.ws.send({
           data: message,
           success: () => {
-            formatAppLog("log", "at pages/index/index.vue:682", "📤 WebSocket报警指令已发送，level=" + level + ", duration=" + duration);
+            formatAppLog("log", "at pages/index/index.vue:713", "📤 WebSocket报警指令已发送，level=" + level + ", duration=" + duration);
           },
           fail: (err) => {
-            formatAppLog("error", "at pages/index/index.vue:685", "WebSocket发送失败:", err);
+            formatAppLog("error", "at pages/index/index.vue:716", "WebSocket发送失败:", err);
           }
         });
       },
@@ -1350,15 +1378,15 @@ if (uni.restoreGlobal) {
             address: this.deviceIp,
             port: 8889,
             message,
-            success: () => formatAppLog("log", "at pages/index/index.vue:699", "📤 UDP停止指令已发送"),
-            fail: (err) => formatAppLog("error", "at pages/index/index.vue:700", "UDP停止失败:", err),
+            success: () => formatAppLog("log", "at pages/index/index.vue:730", "📤 UDP停止指令已发送"),
+            fail: (err) => formatAppLog("error", "at pages/index/index.vue:731", "UDP停止失败:", err),
             complete: () => udp.close()
           });
         }
         if (this.connectionStatus === "connected" && this.ws) {
           this.ws.send({
             data: JSON.stringify({ type: "app_alert", level: 0, duration: 0 }),
-            fail: (err) => formatAppLog("error", "at pages/index/index.vue:707", "WebSocket停止失败:", err)
+            fail: (err) => formatAppLog("error", "at pages/index/index.vue:738", "WebSocket停止失败:", err)
           });
         }
       },
@@ -1378,7 +1406,7 @@ if (uni.restoreGlobal) {
           clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
           if (this.connectionStatus !== "connected") {
-            formatAppLog("log", "at pages/index/index.vue:726", "🔄 自动重连...");
+            formatAppLog("log", "at pages/index/index.vue:757", "🔄 自动重连...");
             this.connectToServer();
           }
         }, delay);
@@ -1399,7 +1427,7 @@ if (uni.restoreGlobal) {
             data: JSON.stringify({ type: "ping", timestamp: Date.now(), from: "health-monitor-app" }),
             success: () => uni.showToast({ title: "测试命令已发送", icon: "success" }),
             fail: (error) => {
-              formatAppLog("error", "at pages/index/index.vue:749", "发送失败:", error);
+              formatAppLog("error", "at pages/index/index.vue:780", "发送失败:", error);
               uni.showToast({ title: "发送失败", icon: "none" });
             }
           });
@@ -1418,17 +1446,23 @@ if (uni.restoreGlobal) {
         this.warningMessage = "";
         this.warningLevel = 0;
         this.sendStopAlert();
+        this.isAlerting = false;
+        this.lastAlertLevel = 0;
       },
       acknowledgeFall() {
         this.fallDetected = false;
         this.hasWarning = false;
         this.sendStopAlert();
+        this.isAlerting = false;
+        this.lastAlertLevel = 0;
         uni.showToast({ title: "已确认", icon: "success" });
       },
       ignoreFall() {
         this.fallDetected = false;
         this.hasWarning = false;
         this.sendStopAlert();
+        this.isAlerting = false;
+        this.lastAlertLevel = 0;
         uni.showToast({ title: "已忽略", icon: "none" });
       },
       getStatusText() {
@@ -2811,8 +2845,8 @@ if (uni.restoreGlobal) {
       return {
         // 服务器配置
         serverConfig: {
-          wsServer: "ws://10.253.88.78:8080",
-          udpTarget: "10.253.88.78",
+          wsServer: "ws://10.14.96.78:8080",
+          udpTarget: "10.14.96.78",
           udpPort: 8888
         },
         // 连接状态
@@ -2821,9 +2855,9 @@ if (uni.restoreGlobal) {
         thresholds: {
           pitch: 15,
           roll: 20,
-          hrMin: 30,
-          hrMax: 200,
-          spo2Min: 70,
+          hrMin: 60,
+          hrMax: 100,
+          spo2Min: 90,
           tempMin: 0,
           tempMax: 50,
           humMin: 20,
@@ -2916,8 +2950,8 @@ if (uni.restoreGlobal) {
           success: (res) => {
             if (res.confirm) {
               this.serverConfig = {
-                wsServer: "ws://10.253.88.78:8080",
-                udpTarget: "10.253.88.78",
+                wsServer: "ws://10.14.96.78:8080",
+                udpTarget: "10.14.96.78",
                 udpPort: 8888
               };
               this.thresholds = {

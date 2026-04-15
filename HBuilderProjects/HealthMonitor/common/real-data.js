@@ -13,7 +13,7 @@ class WebSocketManager {
     this.reconnectTimer = null;
     this.messageHandlers = new Set();
     this.connectionState = 'disconnected';
-    this.serverAddress = 'ws://10.253.88.78:8080';
+    this.serverAddress = 'ws://10.14.96.78:8080';
     this.dataHistory = [];
     this.maxHistory = 100;
     this.reconnectCount = 0;       // 重连计数，防止无限重连

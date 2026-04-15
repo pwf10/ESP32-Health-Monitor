@@ -250,8 +250,8 @@ export default {
     return {
       // 服务器配置
       serverConfig: {
-        wsServer: 'ws://10.253.88.78:8080',
-        udpTarget: '10.253.88.78',
+        wsServer: 'ws://10.14.96.78:8080',
+        udpTarget: '10.14.96.78',
         udpPort: 8888
       },
       
@@ -262,9 +262,9 @@ export default {
       thresholds: {
         pitch: 15,
         roll: 20,
-        hrMin: 30,
-        hrMax: 200,
-        spo2Min: 70,
+        hrMin: 60,
+        hrMax: 100,
+        spo2Min: 90,
         tempMin: 0,
         tempMax: 50,
         humMin: 20,
@@ -383,8 +383,8 @@ export default {
           if (res.confirm) {
             // 重置服务器配置
             this.serverConfig = {
-              wsServer: 'ws://10.253.88.78:8080',
-              udpTarget: '10.253.88.78',
+              wsServer: 'ws://10.14.96.78:8080',
+              udpTarget: '10.14.96.78',
               udpPort: 8888
             }
             
